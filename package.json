@@ -1,0 +1,14 @@
+{
+  "name": "sanae-mascot-pi",
+  "version": "1.0.0",
+  "description": "Sanae Kochiya-inspired wind-priestess mascot for pi: braille header art, shrine commands, and an unnamed confident-newcomer temperament.",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "Unlicense",
+  "pi": {
+    "extensions": [
+      "./extensions/sanae-mascot"
+    ]
+  }
+}
