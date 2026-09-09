@@ -99,6 +99,12 @@ cursor keep working):
 - No bottom border (the `↓ n more` scroll hint still appears on overflow).
 - `editorPaddingX` 0–1 clamps to 2 while chrome is on — the gutter needs those
   columns for layout-stable rendering.
+- Optional vim modal editing: `esc` enters normal mode
+  (`h j k l 0 $ x w b e`, `dw cw C D`, `i a A I`), `esc` in normal aborts like stock, `esc` with a menu open
+  cancels the menu. Mode shows in the plaque (`NORMAL` in shrine blue,
+  `INSERT` in frog green — airline-style, read live from the active theme).
+  Toggle:
+  `/sanae-vim`. Modeless when off.
 
 **Footer** is a faithful stock replica with one change: the right side shows
 just the model (`(provider) model`), no `• thinking` — thinking already lives
@@ -133,6 +139,7 @@ A fresh verb is picked on every `turn_start`. Edit `WORKING_VERBS` in
 | `/sanae-mode`   | Toggle the temperament layer (unnamed, no roleplay)        |
 | `/sanae-header` | Cycle header: slim -> full -> mini -> off (never stock pi) |
 | `/sanae-editor` | Toggle shrine chrome (plaque editor + footer) <-> stock    |
+| `/sanae-vim`    | Toggle vim modal editing in the plaque editor              |
 
 ## Temperament
 

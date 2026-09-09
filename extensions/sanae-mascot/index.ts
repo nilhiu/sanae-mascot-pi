@@ -22,10 +22,11 @@
  *   /sanae-mode     - toggle Sanae-inspired temperament (unnamed, no roleplay)
  *   /sanae-header   - cycle header: squeezed -> full -> mini -> off
  *   /sanae-editor    - toggle shrine chrome (plaque editor + footer): on -> stock
+ *   /sanae-vim       - toggle vim modal editing in the plaque editor
  */
 
 import { CustomEditor, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Box, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Box, matchesKey, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -126,6 +127,49 @@ function formatCwdForFooter(cwd: string): string {
 
 function sanitizeStatusText(text: string): string {
   return text.replace(/[\r\n\t]/g, " ").replace(/ +/g, " ").trim();
+}
+
+// --- true vim word motions ---------------------------------------------
+// Words = runs of word chars ([\p{L}\p{N}_]) or runs of punctuation;
+// whitespace (incl. newlines) separates. Positions are UTF-16 offsets from
+// code-point iteration, so surrogate pairs are never split.
+type VimPos = { line: number; col: number };
+
+function vimCharClass(ch: string): "w" | "p" | "s" {
+  if (/\s/.test(ch)) return "s";
+  return /[\p{L}\p{N}_]/u.test(ch) ? "w" : "p";
+}
+
+function vimRuns(line: string): { start: number; end: number }[] {
+  const runs: { start: number; end: number }[] = [];
+  const chars = [...line];
+  let off = 0, i = 0;
+  while (i < chars.length) {
+    const cls = vimCharClass(chars[i]!);
+    const len = chars[i]!.length;
+    if (cls === "s") {
+      off += len;
+      i++;
+      continue;
+    }
+    const start = off;
+    let end = off;
+    while (i < chars.length && vimCharClass(chars[i]!) === cls) {
+      end = off;
+      off += chars[i]!.length;
+      i++;
+    }
+    runs.push({ start, end });
+  }
+  return runs;
+}
+
+function countGraphemes(s: string): number {
+  try {
+    return [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(s)].length;
+  } catch {
+    return [...s].length;
+  }
 }
 
 // Stock footer replica minus the `model • thinking` suffix (thinking lives in
@@ -336,17 +380,48 @@ export default function sanaeMascot(pi: ExtensionAPI) {
   let miracles = 0;
   let thinkingLabel = "medium";
   let plaqueOn = true;
+  let vimOn = true;
   let tuiRef: any = null;
+  let plaqueEd: PlaqueEditor | null = null;
 
-  // Minimal themed editor: right-aligned plaque top border (Faith Lv +
-  // thinking, 2-cell right padding, thinking-colored dashes), colored Nerd
-  // prompt gutter on the first content line, no bottom border. Extends
-  // CustomEditor so app keys (escape to abort, ctrl+d, model switching,
-  // autocomplete, IME cursor) keep working. Label stays uncolored (terminal
-  // default) so it survives theme switches; dashes and gutter use borderColor
-  // so thinking/bash recolors apply automatically.
+  // Normal-mode key → escape/control sequence sent to the base editor.
+  // Only encodings verified end-to-end (arrows, ^A/^E, ^K, \x1b[3~ delete).
+  // Word motions (w e b dw cw) are NOT here: stock findWordForward stops ON
+  // whitespace and ESC-letter sends proved terminal-fragile, so those are
+  // computed from text+cursor below (true vim semantics) and stepped with
+  // arrows / forward-delete only.
+  const VIM_NORMAL_KEYS: Record<string, string> = {
+    h: "\x1b[D", // left
+    j: "\x1b[B", // down (older history at top)
+    k: "\x1b[A", // up
+    l: "\x1b[C", // right
+    "0": "\x01", // line start
+    $: "\x05", // line end
+    x: "\x1b[3~", // delete char under cursor
+  };
+
+  // Minimal themed editor: plaque top border (mode tag left, Faith Lv +
+  // thinking right, thinking-colored dashes), colored Nerd prompt gutter on
+  // the first content line, no bottom border. Optional vim modal editing
+  // (toggle: /sanae-vim). Extends CustomEditor so app keys (escape to abort,
+  // ctrl+d, model switching, autocomplete, IME cursor) keep working. Labels
+  // stay uncolored (terminal default) so they survive theme switches; dashes
+  // and gutter use borderColor so thinking/bash recolors apply automatically.
   class PlaqueEditor extends CustomEditor {
     public getPlaque: () => string = () => "";
+    public vimOn = true;
+    public vimMode: "normal" | "insert" = "insert";
+    private pendingOp: "d" | "c" | null = null;
+    // Live theme proxy (always current, survives /settings switches and
+    // hot-reload): use for mode-tag colors. Dashes/gutter keep borderColor.
+    public fullTheme: any = null;
+    private paint(color: string, s: string): string {
+      try {
+        return this.fullTheme?.fg?.(color, s) ?? s;
+      } catch {
+        return s;
+      }
+    }
     // The app syncs paddingX from settings (default 0) after the factory
     // runs; floor it so the 2-col gutter always has reserved layout space.
     // Without this the gutter overflows the laid-out width and the terminal
@@ -354,12 +429,172 @@ export default function sanaeMascot(pi: ExtensionAPI) {
     override setPaddingX(p: number): void {
       super.setPaddingX(Math.max(p, 2));
     }
+    private flatAbs(lines: string[], p: VimPos): number {
+      let n = 0;
+      for (let l = 0; l < p.line; l++) n += (lines[l] ?? "").length + 1;
+      return n + p.col;
+    }
+    // w = next word start, e = next word end (strictly after cursor, so e on
+    // a word end advances), b = previous word start. Cross lines; null when
+    // no target (vim bell == do nothing).
+    private vimTarget(kind: "w" | "e" | "b"): VimPos | null {
+      const lines = this.getLines();
+      const cur = this.getCursor();
+      const after = (l: number, c: number) => l > cur.line || (l === cur.line && c > cur.col);
+      const before = (l: number, c: number) => l < cur.line || (l === cur.line && c < cur.col);
+      if (kind === "b") {
+        for (let l = cur.line; l >= 0; l--) {
+          const runs = vimRuns(lines[l] ?? "");
+          for (let r = runs.length - 1; r >= 0; r--) {
+            if (before(l, runs[r]!.start)) return { line: l, col: runs[r]!.start };
+          }
+        }
+        return null;
+      }
+      for (let l = cur.line; l < lines.length; l++) {
+        for (const r of vimRuns(lines[l] ?? "")) {
+          const c = kind === "w" ? r.start : r.end;
+          if (after(l, c)) return { line: l, col: c };
+        }
+      }
+      return null;
+    }
+    // Step with arrows only (verified primitive; left/right cross logical
+    // lines). Targets are grapheme starts so no step overshoots; capped.
+    private stepTo(t: VimPos): void {
+      for (let i = 0; i < 2000; i++) {
+        const c = this.getCursor();
+        if (c.line === t.line && c.col === t.col) return;
+        const fwd = c.line < t.line || (c.line === t.line && c.col < t.col);
+        super.handleInput(fwd ? "\x1b[C" : "\x1b[D");
+      }
+    }
+    // True vim dw: delete [cursor, w-target) in flat graphemes (forward-
+    // delete joins lines at EOL, so cross-line spans work). No target → kill
+    // to end of line; at buffer end → nothing.
+    private vimDeleteToWord(): void {
+      const lines = this.getLines();
+      const cur = this.getCursor();
+      const t = this.vimTarget("w");
+      let range: string;
+      if (!t) {
+        range = (lines[cur.line] ?? "").slice(cur.col);
+      } else {
+        const flat = lines.join("\n");
+        range = flat.slice(this.flatAbs(lines, cur), this.flatAbs(lines, t));
+      }
+      const n = countGraphemes(range);
+      for (let i = 0; i < n; i++) super.handleInput("\x1b[3~");
+    }
+    handleInput(data: string): void {
+      if (!this.vimOn) {
+        super.handleInput(data);
+        return;
+      }
+      if (this.vimMode === "insert") {
+        // Escape enters normal mode — unless a menu is open, where it
+        // cancels autocomplete like stock.
+        if (matchesKey(data, "escape") && !this.isShowingAutocomplete()) {
+          this.vimMode = "normal";
+          this.tui.requestRender();
+          return;
+        }
+        super.handleInput(data);
+        return;
+      }
+      // Operator-pending: d/c followed by w resolves dw/cw. Escape cancels
+      // the operator (does NOT abort the agent); anything else cancels it
+      // and processes as a fresh normal-mode key.
+      if (this.pendingOp) {
+        const op = this.pendingOp;
+        this.pendingOp = null;
+        if (matchesKey(data, "escape")) {
+          this.tui.requestRender();
+          return;
+        }
+        if (data === "w" && (op === "d" || op === "c")) {
+          this.vimDeleteToWord();
+          if (op === "c") this.vimMode = "insert";
+          this.tui.requestRender();
+          return;
+        }
+      }
+      // Normal mode: escape aborts the agent (stock behavior).
+      if (matchesKey(data, "escape")) {
+        super.handleInput(data);
+        return;
+      }
+      if (data === "i") {
+        this.vimMode = "insert";
+        this.tui.requestRender();
+        return;
+      }
+      if (data === "a") {
+        this.vimMode = "insert";
+        super.handleInput("\x1b[C"); // step right, then insert
+        this.tui.requestRender();
+        return;
+      }
+      if (data === "A") {
+        this.vimMode = "insert";
+        super.handleInput("\x05"); // line end, then insert
+        this.tui.requestRender();
+        return;
+      }
+      if (data === "I") {
+        this.vimMode = "insert";
+        super.handleInput("\x01"); // line start, then insert
+        this.tui.requestRender();
+        return;
+      }
+      if (data === "d" || data === "c") {
+        this.pendingOp = data; // resolved by the next key (dw/cw)
+        return;
+      }
+      if (data === "D") {
+        super.handleInput("\x0b"); // delete-to-line-end (default ctrl+k)
+        return;
+      }
+      if (data === "C") {
+        super.handleInput("\x0b"); // kill to end, then insert
+        this.vimMode = "insert";
+        this.tui.requestRender();
+        return;
+      }
+      const seq = VIM_NORMAL_KEYS[data];
+      if (seq) {
+        super.handleInput(seq);
+        return;
+      }
+      if (data === "w" || data === "e" || data === "b") {
+        const t = this.vimTarget(data);
+        if (t) {
+          this.stepTo(t);
+          this.tui.requestRender();
+        }
+        return;
+      }
+      // Swallow printable chars in normal mode; control sequences
+      // (ctrl+c, ctrl+g, ...) still reach the app.
+      if (data.length === 1 && data.charCodeAt(0) >= 32) return;
+      super.handleInput(data);
+    }
     protected renderTopBorder(width: number, hiddenLineCount: number): string {
       if (hiddenLineCount > 0) return super.renderTopBorder(width, hiddenLineCount);
-      const label = this.getPlaque();
-      const lw = visibleWidth(label);
-      if (lw + 3 > width) return this.borderColor(truncateToWidth(label, width));
-      return this.borderColor("─".repeat(width - lw - 3) + " ") + label + "  ";
+      const plaque = this.getPlaque();
+      if (!this.vimOn) {
+        const lw = visibleWidth(plaque);
+        if (lw + 3 > width) return this.borderColor(truncateToWidth(plaque, width));
+        return this.borderColor("─".repeat(width - lw - 3) + " ") + plaque + "  ";
+      }
+      const isNormal = this.vimMode === "normal";
+      const leftLabel = ` ${this.paint(isNormal ? "accent" : "success", isNormal ? "NORMAL" : "INSERT")} `;
+      const rightLabel = ` ${plaque}  `;
+      const used = visibleWidth(leftLabel) + visibleWidth(rightLabel);
+      if (used + 1 > width) {
+        return this.borderColor(truncateToWidth(`${leftLabel.trim()} ${plaque}`, width));
+      }
+      return leftLabel + this.borderColor("─".repeat(width - used)) + rightLabel;
     }
     protected renderBottomBorder(width: number, linesBelow: number): string {
       // No bottom chrome; keep the scroll indicator when content overflows.
@@ -392,7 +627,10 @@ export default function sanaeMascot(pi: ExtensionAPI) {
     ctx.ui.setEditorComponent((tui: any, theme: any, kb: any) => {
       tuiRef = tui;
       const ed = new PlaqueEditor(tui, theme, kb);
+      ed.vimOn = vimOn;
+      ed.fullTheme = ctx.ui.theme;
       ed.getPlaque = () => `\uEEE6 Faith Lv.${Math.min(99, miracles)} · ${thinkingLabel}`;
+      plaqueEd = ed;
       return ed;
     });
     applyShrineFooter(ctx);
@@ -653,6 +891,23 @@ export default function sanaeMascot(pi: ExtensionAPI) {
         applyShrineChrome(ctx);
         ctx.ui.notify("\uEEE6 Shrine chrome on (plaque editor + footer)", "info");
       }
+    },
+  });
+
+  pi.registerCommand("sanae-vim", {
+    description: "Toggle vim modal editing in the plaque editor",
+    handler: async (_args, ctx) => {
+      vimOn = !vimOn;
+      if (plaqueEd) {
+        plaqueEd.vimOn = vimOn;
+        if (!vimOn) plaqueEd.vimMode = "insert";
+      }
+      try {
+        tuiRef?.requestRender();
+      } catch {
+        // ignore
+      }
+      ctx.ui.notify(vimOn ? "Vim motions ON (esc: normal mode, i: insert)" : "Vim motions OFF (modeless)", "info");
     },
   });
 
