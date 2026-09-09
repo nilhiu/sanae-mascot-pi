@@ -21,13 +21,14 @@
  *   /pray           - pray for build/tests
  *   /sanae-mode     - toggle Sanae-inspired temperament (unnamed, no roleplay)
  *   /sanae-header   - cycle header: squeezed -> full -> mini -> off
+ *   /sanae-editor    - toggle shrine chrome (plaque editor + footer): on -> stock
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { CustomEditor, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Box, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 interface SanaeArtData {
@@ -102,6 +103,184 @@ function pick(arr: string[]): string {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+// Prompt gutter glyph: ❯ (U+276F). Verified with `fc-list :charset=276F`
+// (422 fonts, same family as Starship/powerlevel10k prompts). Width 1.
+const PROMPT_GLYPH = "❯";
+
+function formatTokens(n: number): string {
+  if (n < 1000) return `${n}`;
+  if (n < 10000) return `${(n / 1000).toFixed(1)}k`;
+  if (n < 1000000) return `${Math.round(n / 1000)}k`;
+  if (n < 10000000) return `${(n / 1000000).toFixed(1)}M`;
+  return `${Math.round(n / 1000000)}M`;
+}
+
+function formatCwdForFooter(cwd: string): string {
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  if (!home) return cwd;
+  const rel = relative(resolve(home), resolve(cwd));
+  const inside = rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+  if (!inside) return cwd;
+  return rel === "" ? "~" : `~${sep}${rel}`;
+}
+
+function sanitizeStatusText(text: string): string {
+  return text.replace(/[\r\n\t]/g, " ").replace(/ +/g, " ").trim();
+}
+
+// Stock footer replica minus the `model • thinking` suffix (thinking lives in
+// the plaque now). Mirrors pi's FooterComponent: pwd line, token stats line
+// with right-aligned model, extension statuses line. Two known drifts vs
+// stock: the "(auto)" compaction marker is always shown (flag not exposed
+// to extensions; matches the default setting), and the subscription "(sub)"
+// marker only triggers for subscription-backed providers known statically.
+function renderShrineFooter(width: number, ctx: any, theme: any, footerData: any): string[] {
+  let input = 0, output = 0, cacheRead = 0, cacheWrite = 0, cost = 0;
+  let latestCacheHitRate: number | undefined;
+  for (const e of ctx.sessionManager.getEntries()) {
+    try {
+      if (e.type === "message" && e.message?.role === "assistant" && e.message.usage) {
+        const u = e.message.usage;
+        input += u.input ?? 0; output += u.output ?? 0;
+        cacheRead += u.cacheRead ?? 0; cacheWrite += u.cacheWrite ?? 0;
+        cost += u.cost?.total ?? 0;
+        const latestPrompt = (u.input ?? 0) + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0);
+        latestCacheHitRate = latestPrompt > 0 ? ((u.cacheRead ?? 0) / latestPrompt) * 100 : undefined;
+      } else if (e.type === "message" && e.message?.role === "toolResult" && e.message.usage) {
+        const u = e.message.usage;
+        input += u.input ?? 0; output += u.output ?? 0;
+        cacheRead += u.cacheRead ?? 0; cacheWrite += u.cacheWrite ?? 0;
+        cost += u.cost?.total ?? 0;
+      } else if ((e.type === "branch_summary" || e.type === "compaction") && e.usage) {
+        const u = e.usage;
+        input += u.input ?? 0; output += u.output ?? 0;
+        cacheRead += u.cacheRead ?? 0; cacheWrite += u.cacheWrite ?? 0;
+        cost += u.cost?.total ?? 0;
+      }
+    } catch {
+      // skip malformed entries
+    }
+  }
+
+  let contextWindow = ctx.model?.contextWindow ?? 0;
+  let contextPercent = "?";
+  let contextPercentValue = 0;
+  try {
+    const cu = ctx.getContextUsage?.();
+    if (cu) {
+      contextWindow = cu.contextWindow ?? contextWindow;
+      if (cu.percent !== null && cu.percent !== undefined) {
+        contextPercentValue = cu.percent;
+        contextPercent = cu.percent.toFixed(1);
+      }
+    }
+  } catch {
+    // unknown until next LLM response
+  }
+
+  let pwd = formatCwdForFooter(ctx.sessionManager.getCwd());
+  try {
+    const branch = footerData.getGitBranch();
+    if (branch) pwd = `${pwd} (${branch})`;
+  } catch {
+    // no git info
+  }
+  try {
+    const sessionName = ctx.sessionManager.getSessionName();
+    if (sessionName) pwd = `${pwd} • ${sessionName}`;
+  } catch {
+    // unnamed session
+  }
+
+  const statsParts: string[] = [];
+  if (input) statsParts.push(`↑${formatTokens(input)}`);
+  if (output) statsParts.push(`↓${formatTokens(output)}`);
+  if (cacheRead) statsParts.push(`R${formatTokens(cacheRead)}`);
+  if (cacheWrite) statsParts.push(`W${formatTokens(cacheWrite)}`);
+  if ((cacheRead > 0 || cacheWrite > 0) && latestCacheHitRate !== undefined) {
+    statsParts.push(`CH${latestCacheHitRate.toFixed(1)}%`);
+  }
+  const provider: string | undefined = ctx.model?.provider;
+  const usingSubscription = provider === "kimi-coding" || provider === "kimi-for-coding";
+  if (cost || usingSubscription) {
+    statsParts.push(`$${cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`);
+  }
+  const contextDisplay = `${contextPercent}%/${formatTokens(contextWindow)} (auto)`;
+  if (contextPercentValue > 90) statsParts.push(theme.fg("error", contextDisplay));
+  else if (contextPercentValue > 70) statsParts.push(theme.fg("warning", contextDisplay));
+  else statsParts.push(contextDisplay);
+
+  let statsLeft = statsParts.join(" ");
+  let statsLeftWidth = visibleWidth(statsLeft);
+  if (statsLeftWidth > width) {
+    statsLeft = truncateToWidth(statsLeft, width, "...");
+    statsLeftWidth = visibleWidth(statsLeft);
+  }
+
+  // Right side: model only — no thinking level (it lives in the plaque).
+  const modelName: string = ctx.model?.id || "no-model";
+  let rightSide = modelName;
+  try {
+    if (footerData.getAvailableProviderCount() > 1 && ctx.model && provider) {
+      const withProvider = `(${provider}) ${modelName}`;
+      if (statsLeftWidth + 2 + visibleWidth(withProvider) <= width) rightSide = withProvider;
+    }
+  } catch {
+    // provider count unavailable
+  }
+  const rightSideWidth = visibleWidth(rightSide);
+  let statsLine: string;
+  if (statsLeftWidth + 2 + rightSideWidth <= width) {
+    statsLine = statsLeft + " ".repeat(width - statsLeftWidth - rightSideWidth) + rightSide;
+  } else {
+    const avail = width - statsLeftWidth - 2;
+    if (avail > 0) {
+      const tr = truncateToWidth(rightSide, avail, "");
+      statsLine = statsLeft + " ".repeat(Math.max(0, width - statsLeftWidth - visibleWidth(tr))) + tr;
+    } else {
+      statsLine = statsLeft;
+    }
+  }
+
+  const dimStatsLeft = theme.fg("dim", statsLeft);
+  const dimRemainder = theme.fg("dim", statsLine.slice(statsLeft.length));
+  const lines = [
+    truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "...")),
+    dimStatsLeft + dimRemainder,
+  ];
+  try {
+    const statuses: ReadonlyMap<string, string> = footerData.getExtensionStatuses();
+    if (statuses.size > 0) {
+      const line = Array.from(statuses.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([, text]) => sanitizeStatusText(text))
+        .join(" ");
+      lines.push(truncateToWidth(line, width, theme.fg("dim", "...")));
+    }
+  } catch {
+    // no extension statuses
+  }
+  return lines;
+}
+
+function applyShrineFooter(ctx: any) {
+  if (!ctx.hasUI) return;
+  ctx.ui.setFooter((tui: any, theme: any, footerData: any) => {
+    const unsub = footerData.onBranchChange(() => tui.requestRender());
+    return {
+      dispose: unsub,
+      invalidate() {},
+      render(width: number): string[] {
+        try {
+          return renderShrineFooter(width, ctx, theme, footerData);
+        } catch {
+          return [];
+        }
+      },
+    };
+  });
+}
+
 function loadArtFile(name: string): string[] | null {
   const candidates: string[] = [];
   try {
@@ -155,6 +334,74 @@ export default function sanaeMascot(pi: ExtensionAPI) {
   // Cycle: slim (14, default) -> full (27) -> mini (2) -> off
   let headerMode: "squeezed" | "full" | "mini" | "off" = "squeezed";
   let miracles = 0;
+  let thinkingLabel = "medium";
+  let plaqueOn = true;
+  let tuiRef: any = null;
+
+  // Minimal themed editor: right-aligned plaque top border (Faith Lv +
+  // thinking, 2-cell right padding, thinking-colored dashes), colored Nerd
+  // prompt gutter on the first content line, no bottom border. Extends
+  // CustomEditor so app keys (escape to abort, ctrl+d, model switching,
+  // autocomplete, IME cursor) keep working. Label stays uncolored (terminal
+  // default) so it survives theme switches; dashes and gutter use borderColor
+  // so thinking/bash recolors apply automatically.
+  class PlaqueEditor extends CustomEditor {
+    public getPlaque: () => string = () => "";
+    // The app syncs paddingX from settings (default 0) after the factory
+    // runs; floor it so the 2-col gutter always has reserved layout space.
+    // Without this the gutter overflows the laid-out width and the terminal
+    // hard-wraps the line (gutter vanishes, wrap point shifts).
+    override setPaddingX(p: number): void {
+      super.setPaddingX(Math.max(p, 2));
+    }
+    protected renderTopBorder(width: number, hiddenLineCount: number): string {
+      if (hiddenLineCount > 0) return super.renderTopBorder(width, hiddenLineCount);
+      const label = this.getPlaque();
+      const lw = visibleWidth(label);
+      if (lw + 3 > width) return this.borderColor(truncateToWidth(label, width));
+      return this.borderColor("─".repeat(width - lw - 3) + " ") + label + "  ";
+    }
+    protected renderBottomBorder(width: number, linesBelow: number): string {
+      // No bottom chrome; keep the scroll indicator when content overflows.
+      if (linesBelow > 0) return super.renderBottomBorder(width, linesBelow);
+      return "";
+    }
+    render(width: number): string[] {
+      const lines = super.render(width);
+      const contentCount = (this as any).renderedVisibleLineCount ?? 0;
+      if (contentCount <= 0) return lines;
+      // Drop the empty bottom border line (index 1 + contentCount).
+      const bi = 1 + contentCount;
+      if (lines[bi] === "") lines.splice(bi, 1);
+      // Gutter: swap the 2 reserved leading padding cols for glyph + space.
+      // Same visible width, so cursor math and wrapping are unaffected.
+      // (Padding is floored at 2 above, so the prefix is always present
+      // except on extremely narrow terminals where the layout clamps it.)
+      if (lines.length > 1) {
+        const first = lines[1] ?? "";
+        if (first.startsWith("  ")) {
+          lines[1] = this.borderColor(PROMPT_GLYPH) + " " + first.slice(2);
+        }
+      }
+      return lines;
+    }
+  }
+
+  function applyShrineChrome(ctx: any) {
+    if (!ctx.hasUI) return;
+    ctx.ui.setEditorComponent((tui: any, theme: any, kb: any) => {
+      tuiRef = tui;
+      const ed = new PlaqueEditor(tui, theme, kb);
+      ed.getPlaque = () => `\uEEE6 Faith Lv.${Math.min(99, miracles)} · ${thinkingLabel}`;
+      return ed;
+    });
+    applyShrineFooter(ctx);
+  }
+
+  function restoreStockChrome(ctx: any) {
+    ctx.ui.setEditorComponent(undefined);
+    ctx.ui.setFooter(undefined);
+  }
 
   const getArt = () => loadFullArt();
   const getHeaderLines = (): string[] => {
@@ -292,9 +539,20 @@ export default function sanaeMascot(pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     if (!ctx.hasUI) return;
+    try {
+      thinkingLabel = (ctx as any).getThinkingLevel?.() ?? (ctx as any).thinkingLevel ?? thinkingLabel;
+    } catch {
+      // keep default
+    }
     applyHeader(ctx);
     applyWorkingIndicator(ctx);
-    (ctx.ui as any).setStatus?.("sanae", "\uEEE6 Faith Lv.0");
+    if (plaqueOn) applyShrineChrome(ctx);
+    try {
+      // Plaque shows Faith now — clear the old footer pill.
+      (ctx.ui as any).setStatus?.("sanae", undefined);
+    } catch {
+      // ignore
+    }
     ctx.ui.notify(`\uEEE6 ${pick(QUOTES)}  (/sanae to summon me!)`, "info");
   });
 
@@ -316,9 +574,8 @@ export default function sanaeMascot(pi: ExtensionAPI) {
   pi.on("turn_end", async (_event, ctx) => {
     if (!ctx.hasUI) return;
     miracles++;
-    const lvl = Math.min(99, miracles);
     try {
-      (ctx.ui as any).setStatus?.("sanae", `\uEEE6 Faith Lv.${lvl} · \uEDF8`);
+      tuiRef?.requestRender(); // refresh plaque Faith Lv
     } catch {
       // ignore
     }
@@ -381,6 +638,20 @@ export default function sanaeMascot(pi: ExtensionAPI) {
         const size =
           headerMode === "full" ? `${getArt().length} lines (full)` : headerMode === "squeezed" ? `${loadHeaderArt().length} lines (slim green)` : "mini (2 lines)";
         ctx.ui.notify(`\uEEE6 Sanae header: ${size}`, "info");
+      }
+    },
+  });
+
+  pi.registerCommand("sanae-editor", {
+    description: "Toggle shrine chrome (plaque editor + footer): on -> stock",
+    handler: async (_args, ctx) => {
+      plaqueOn = !plaqueOn;
+      if (!plaqueOn) {
+        restoreStockChrome(ctx);
+        ctx.ui.notify("Stock editor + footer restored", "info");
+      } else {
+        applyShrineChrome(ctx);
+        ctx.ui.notify("\uEEE6 Shrine chrome on (plaque editor + footer)", "info");
       }
     },
   });
