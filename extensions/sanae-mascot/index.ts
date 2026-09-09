@@ -53,6 +53,51 @@ const BLESSINGS = [
   "Miracle Moe! Merge conflicts, disperse!",
 ];
 
+// Claude-style rotating verbs for the streaming working indicator.
+// One verb is picked per turn (see turn_start); only the dots animate.
+// Glyph policy: torii prefix only, no trailing symbols.
+const WORKING_VERBS = [
+  "Gathering faith",
+  "Waving gohei",
+  "Purifying curses",
+  "Blessing code",
+  "Channeling wind",
+  "Offering prayers",
+  "Consulting gods",
+  "Chasing frogs",
+  "Shedding curses",
+  "Summoning miracles",
+  "Reading omikuji",
+  "Ringing bells",
+  "Sweeping shrine",
+  "Dispelling mist",
+  "Befriending snakes",
+  "Brewing miracles",
+];
+
+function setShrineWorkingVerb(ctx: any, verb: string) {
+  try {
+    const theme = ctx.ui.theme;
+    const base = `\uEEE6 ${verb}`;
+    ctx.ui.setWorkingIndicator({
+      frames: [".", "..", "..."].map((d) => theme.fg("accent", `${base}${d}`)),
+      intervalMs: 400,
+    });
+  } catch {
+    // ignore — default spinner stays
+  }
+}
+
+function applyWorkingIndicator(ctx: any) {
+  // Hide the stock "Working" label; the verb frames carry the meaning.
+  try {
+    ctx.ui.setWorkingMessage("");
+  } catch {
+    // ignore
+  }
+  setShrineWorkingVerb(ctx, pick(WORKING_VERBS));
+}
+
 function pick(arr: string[]): string {
   return arr[Math.floor(Math.random() * arr.length)];
 }
@@ -248,8 +293,24 @@ export default function sanaeMascot(pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     if (!ctx.hasUI) return;
     applyHeader(ctx);
+    applyWorkingIndicator(ctx);
     (ctx.ui as any).setStatus?.("sanae", "\uEEE6 Faith Lv.0");
     ctx.ui.notify(`\uEEE6 ${pick(QUOTES)}  (/sanae to summon me!)`, "info");
+  });
+
+  pi.on("thinking_level_select", async (event, _ctx) => {
+    thinkingLabel = event.level;
+    try {
+      tuiRef?.requestRender();
+    } catch {
+      // ignore
+    }
+  });
+
+  pi.on("turn_start", async (_event, ctx) => {
+    if (!ctx.hasUI) return;
+    // Fresh verb per thinking process; dots animate within it.
+    setShrineWorkingVerb(ctx, pick(WORKING_VERBS));
   });
 
   pi.on("turn_end", async (_event, ctx) => {
