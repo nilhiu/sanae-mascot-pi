@@ -1,26 +1,55 @@
 # sanae-mascot-pi
 
-A wind-priestess mascot for [pi](https://pi.dev), inspired by Sanae Kochiya (Touhou).
-Braille portrait header, Moriya-shrine theme, plaque editor, shrine working
-verbs, and a confident-newcomer temperament — with no roleplay: the agent
-never names her or speaks as her.
+Two Umamusume mascots for [pi](https://pi.dev): **Sanae Kochiya** (Moriya
+Shrine) and **Matikanetannhauser** — **Machitan** / **Mambo**. Braille portrait
+headers, matching themes, a plaque editor, rotating working verbs, and
+switchable temperaments.
 
-## What's inside
+The package name is historical: `/mascot` switches between both mascots at
+runtime, and Sanae remains the default.
 
-- **Header** — 14-line slim braille portrait (all green) with an info panel,
-  plus `/sanae`, `/miracle`, and `/pray` commands.
-- **Theme `moriya-shrine`** — dark shrine palette: frog-green success (which
-  colors the portrait), shrine-blue accent, lantern headings, thinking-level
-  border gradient, curse-red bash mode.
-- **Shrine chrome** — plaque editor + matching footer (see below).
-- **Working verbs** — Claude-style `-ing` rotation, one verb per thought.
-- **Temperament** — behavior-only prompt layer, unnamed, no roleplay.
+## Mascots
+
+### Sanae Kochiya
+
+The Moriya Shrine wind priestess. A 14-line green braille portrait header, the
+`moriya-shrine` palette, and an unnamed confident-newcomer temperament (no
+roleplay). Commands: `/sanae`, `/miracle`, `/pray`.
+
+### Matikanetannhauser (Machitan / Mambo)
+
+Tracen Academy's optimistic late surger. An 11-line blue portrait header, an
+18-line full portrait, the `tannhauser-turf` palette, and a warm, slightly
+airheaded, genuinely hardworking personality with optional full roleplay.
+Commands: `/machitan`, `/mambo`, `/train`, `/mambo-fact`.
+
+"Machitan" is her common nickname; "Mambo" is the affectionate fan nickname
+from her festival dance. She has **no** "Trainer" address — the persona talks
+to you normally.
 
 ## Preview
 
-The default header (14-line slim portrait, all green, info panel on the right):
+Machitan's default header (11 lines, 29 columns; the horse-head glyph is Nerd
+Fonts `fa-horse-head`):
 
+```text
+⡀⡀⡀⡀⡀⡀⢠⣾⣿⡿⠋⡀⡀⡀⡀⡀⡀⡀⣠⣾⣿⠿⣛⣛⣿⣿⣿⡀⡀
+⡀⡀⡀⢀⣀⣴⡾⠛⠉⡀⡀⡀⡀⡀⠄⢀⣤⣾⣿⣿⡿⠚⠉⡀⡀⡀⠉⠻⠄
+⣶⠾⠿⠛⠉⠁⡀⡀⡀⡀⡀⣒⣭⣴⣾⣿⣿⣿⣿⣿⣇⡔⡀⡀⡀⣀⢳⡄⠑
+⡀⡀⢀⣤⠂⡀⡀⡀⣀⣄⢷⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⡀⡀⠘⠛⢹⣿⡀
+⡀⡀⣾⣿⡀⡀⡀⡀⠙⠋⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⡀⣠⣤⡀⢸⣿⣠
+⡀⠘⣿⣿⡄⡀⢠⣤⣄⡀⣸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣦⣛⣿⣴⣿⣻⣿
+⡀⢠⣜⣿⣿⣤⣸⣿⣟⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡏
+⡀⠘⣿⣷⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠿⢿⣿⣿⣿⣿⣿⣿⡇
+⡀⡀⠙⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⢟⣭⣭⣭⣭⣭⣶⣿⣷⣻⣿⣿⣿⣿⠟⡀
+⡀⡀⡀⠘⣿⣿⣿⣿⣿⣿⣿⣿⣿⠻⣿⣿⣿⣿⣿⣿⠿⣣⣿⣿⣿⠟⠁⡀⡀
+⡀⡀⡀⡀⠈⠻⢿⣿⣿⣿⣿⣿⣿⣷⣦⣭⣭⣭⣥⣶⣾⡿⠟⠋
 ```
+
+Sanae's default header (14 lines, 24 columns; torii = Nerd Fonts
+`fa-torii-gate`):
+
+```text
 ⠀⠀⠀⠀⠀⠀⠀⠀⣀⡤⠔⠒⠒⠒⠒⢲⠖⠶⣄⣀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⣠⠞⠁⠀⠀⠀⠀⠀⠀⣗⠒⠲⢌⢻⡇⠀⠀⠀
 ⠀⠀⠀⠀⠀⡸⠁⠀⢀⡀⠀⠀⠀⠀⣆⠘⠷⢤⡬⡟⠘⡄⠀⠀
@@ -37,10 +66,10 @@ The default header (14-line slim portrait, all green, info panel on the right):
 ⠀⠀⠀⠉⠛⠉⠉⠙⠛⠚⠻⢤⡤⣀⣀⢰⣴⠿⠿⠟⠾⠛⠛⠁
 ```
 
-The plaque editor (`torii` = Nerd `fa-torii-gate` glyph, `❯` = U+276F):
+The plaque editor (`❯` = U+276F):
 
-```
-────────────────── torii Faith Lv.3 · high
+```text
+─────────────────  Training Lv.3 · high
 ❯ your text here
 ```
 
@@ -58,103 +87,163 @@ cp -r themes ~/.pi/agent/themes/
 # then /reload inside pi
 ```
 
-The theme is also selected automatically on first load if you set
-`"theme": "moriya-shrine"` in `~/.pi/agent/settings.json`.
+Sanae is the default active mascot. Switch with `/mascot machitan`; the choice
+persists.
 
-## Requirements
+## Switching mascots
 
-- A **Nerd Font** in your terminal. The torii-gate, frog, and prompt markers
-  are Nerd Font glyphs (`fa-torii-gate`, `fa-frog`, U+276F); without one they
-  show as boxes.
-- Plain emoji (U+26E9, U+1F438, U+2728) is deliberately *not* used — it
-  renders as tofu on systems with no emoji font.
-- A font with Braille Patterns (U+2800 block) for the portrait.
+```text
+/mascot                 pick from a list
+/mascot sanae           Moriya Shrine
+/mascot machitan        Matikanetannhauser (also /mascot mambo)
+```
 
-## Theme
+The active mascot, persona mode, header size, chrome/vim toggles, and theme
+auto-swap preference live in `~/.pi/agent/mascot-state.json`. For isolated
+testing, `PI_MASCOT_STATE` overrides that path.
 
-`themes/moriya-shrine.json` ships in the package and loads via the `pi.themes`
-manifest entry, so installers get it with zero extra steps.
+`/mascot-theme` toggles auto-swap. It only swaps between `moriya-shrine` and
+`tannhauser-turf`; if you are using a custom theme, it is left alone.
 
-Design notes:
+## Commands
 
-- `success` is frog green *on purpose* — the portrait art is colored with the
-  `success` token, so this keeps Sanae green.
-- Editor borders run moss → shrine blue → miracle cyan across thinking
-  levels (`off` asleep … `max` miracle incoming); `bashMode` (`!` prefix) goes
-  curse red.
-- Headings and list bullets are lantern warm; inline code and types are
-  miracle cyan.
+| Command | What it does |
+|---|---|
+| `/mascot [sanae\|machitan]` | Switch mascot (interactive picker without an argument) |
+| `/mascot-header` | Cycle the active header: slim -> full -> mini -> off |
+| `/mascot-editor` | Toggle chrome (plaque editor + footer) <-> stock |
+| `/mascot-vim` | Toggle vim modal editing |
+| `/mascot-theme` | Toggle theme auto-swap between the two mascot palettes |
+| `/sanae [msg]` | Summon full Sanae art + shrine quote |
+| `/miracle <task>` | Sanae blesses a task (compact art) |
+| `/pray` | Pray for the build/tests |
+| `/sanae-mode` | Toggle Sanae's unnamed temperament |
+| `/sanae-header`, `/sanae-editor`, `/sanae-vim` | Switch to Sanae and run the matching chrome action |
+| `/machitan [msg]` | Summon full Machitan art + quote |
+| `/mambo` | Compact Machitan art + festival-mambo quote |
+| `/train <task>` | Machitan sets a training menu / blesses a task |
+| `/machitan-mode` (alias `/mambo-mode`) | Cycle Machitan persona: flavor -> mambo -> off |
+| `/mambo-fact` (alias `/machitan-fact`) | Print a random Matikanetannhauser fact |
+| `/machitan-header`, `/machitan-editor`, `/machitan-vim` | Switch to Machitan and run the matching chrome action |
 
-## Shrine chrome
+Sanae's original commands keep their old behavior; they now switch back to
+Sanae first if Machitan is active.
 
-Enabled by default; `/sanae-editor` toggles shrine chrome ↔ stock box+footer.
+## Personality
+
+Only the active mascot's layer is injected.
+
+**Sanae** — the existing unnamed "confident newcomer" behavior layer: energetic,
+dutiful, curious, thorough. No roleplay, no name claims. Toggle: `/sanae-mode`.
+
+**Machitan** has three levels, cycled by `/machitan-mode`:
+
+- **flavor** (default) — warm, optimistic, a little airheaded, genuinely
+  hardworking; light training/race metaphors and a rare `mambo~` or
+  `ei ei mun!`. No character claims, no game-world experiences.
+- **mambo** — full first-person Machitan voice: cheerful, earnest, a little
+  clumsy, treats tasks like training for a race, and can reference Tracen,
+  Team Canopus, Fuku-chan-senpai, her third hat, late-surger racing, snacks,
+  the nosebleed/hives gag, and other game details. Still Pi underneath; the
+  persona is a skin, not a license.
+- **off** — no layer.
+
+Both Machitan levels explicitly avoid calling you "Trainer" and keep the
+engineering rules: read before concluding, verify, cite files/commands, run
+tests, never bluff. The roleplay drops immediately for destructive or
+security-sensitive work, or when you ask it to stop.
+
+## Themes
+
+Two themes ship in the package:
+
+- `moriya-shrine` — dark green shrine palette; Sanae's portrait is colored with
+  `success` so she stays frog-green.
+- `tannhauser-turf` — deep navy track, official blue `#0F8DCE` accent, ribbon
+  red `#EE5B56`, amber warnings/headings, cream text, turf-green success.
+  Machitan's portrait uses `accent` with a dim braille backdrop.
+
+Select a theme through `/settings`; `/mascot` auto-swaps only when the current
+theme is already one of these two.
+
+## Chrome
+
+Enabled by default; `/mascot-editor` toggles chrome <-> stock.
 
 **Plaque editor** (`CustomEditor` subclass, so app keys, autocomplete, and IME
 cursor keep working):
 
-- Top border is a right-aligned plaque: `torii Faith Lv.N · <thinking>`,
-  with 2-cell right padding. Dashes use the thinking color; the label stays
-  uncolored so it survives theme switches.
+- Top border is a right-aligned plaque: `torii Faith Lv.N · <thinking>` for
+  Sanae, `horse-head Training Lv.N · <thinking>` for Machitan. Dashes use the
+  thinking color; labels stay uncolored so they survive theme switches.
 - First content line gets a `❯` gutter in the thinking color.
 - No bottom border (the `↓ n more` scroll hint still appears on overflow).
-- `editorPaddingX` 0–1 clamps to 2 while chrome is on — the gutter needs those
-  columns for layout-stable rendering.
 - Optional vim modal editing: `esc` enters normal mode
-  (`h j k l 0 $ x w b e`, `dw cw C D`, `i a A I`), `esc` in normal aborts like stock, `esc` with a menu open
-  cancels the menu. Mode shows in the plaque (`NORMAL` in shrine blue,
-  `INSERT` in frog green — airline-style, read live from the active theme).
-  Toggle:
-  `/sanae-vim`. Modeless when off.
+  (`h j k l 0 $ x w b e`, `dw cw C D`, `i a A I`), `esc` in normal aborts like
+  stock, `esc` with a menu open cancels the menu. Toggle: `/mascot-vim`.
+- The level increments once per turn; it is per-mascot and resets each session.
 
 **Footer** is a faithful stock replica with one change: the right side shows
 just the model (`(provider) model`), no `• thinking` — thinking already lives
 in the plaque. Token stats, cost, context %, pwd/branch, and extension
-statuses are unchanged. (Two known drifts vs stock, noted in code: the
-`(auto)` compaction marker is always shown, and the `(sub)` marker only fires
-for statically-known subscription providers.)
+statuses are unchanged.
 
 ## Working verbs
 
-While the agent streams, the working line shows one shrine verb per turn with
-an animated `.` → `..` → `...` pulse, torii-prefixed, stock `Working` label
-hidden:
+A fresh Claude-style `-ing` verb is picked per turn; only the dots animate.
+Sanae uses the torii prefix and shrine verbs. Machitan uses the horse-head
+prefix and race/training verbs (`Warming up`, `Running laps`, `Checking the
+gate`, `Surging late`, `Mambo-ing`, ...).
 
-> torii Gathering faith.. / Waving gohei.. / Purifying curses.. /
-> Blessing code.. / Channeling wind.. / Offering prayers.. /
-> Consulting gods.. / Chasing frogs.. / Shedding curses.. /
-> Summoning miracles.. / Reading omikuji.. / Ringing bells.. /
-> Sweeping shrine.. / Dispelling mist.. / Befriending snakes.. /
-> Brewing miracles..
+Edit `verbs` in `extensions/sanae-mascot/profiles.ts` to taste.
 
-A fresh verb is picked on every `turn_start`. Edit `WORKING_VERBS` in
-`extensions/sanae-mascot/index.ts` to taste.
+## Art and glyphs
 
-## Commands
+- `sanae-full.txt` (27x47) — `/sanae`; `sanae-compact-14.txt` (14x24) — header
+  and `/miracle`.
+- `machitan-full.txt` (18x35) — `/machitan`; `machitan-header.txt` (11x29) —
+  header and `/mambo`.
+- Machitan uses density-aware coloring: full/empty braille cells are dim
+  background, partial cells are the bright portrait. This keeps the 18x35 art
+  readable instead of flattening it into a block.
+- Glyph policy: no emoji. `\uEEE6` torii, `\uEDF8` frog, `\uEF51` horse head,
+  `✦` sparkle, `❯` prompt. All verified against the installed Nerd Fonts.
 
-| Command         | What it does                                               |
-|-----------------|------------------------------------------------------------|
-| `/sanae [msg]`  | Summon the full 27-line portrait + shrine quote            |
-| `/miracle <t>`  | Bless a task (compact portrait)                            |
-| `/pray`         | Pray for the build/tests                                   |
-| `/sanae-mode`   | Toggle the temperament layer (unnamed, no roleplay)        |
-| `/sanae-header` | Cycle header: slim -> full -> mini -> off (never stock pi) |
-| `/sanae-editor` | Toggle shrine chrome (plaque editor + footer) <-> stock    |
-| `/sanae-vim`    | Toggle vim modal editing in the plaque editor              |
+## Requirements
 
-## Temperament
-
-`sanae-mode` (on by default) injects a behavior-only prompt layer mapped from
-her wiki personality - confident, energetic, dutiful newcomer energy with a
-geeky streak - without naming any character, so the agent never LARPs. It
-makes no identity claims (that caused precedence-think-loop artifacts), only
-voice and work-habit guidance. The plaque tracks `Faith Lv.` per turn.
+- A **Nerd Font** in your terminal for the torii, frog, horse-head, and `❯`
+  glyphs.
+- A font with Braille Patterns (U+2800 block).
+- Plain emoji (U+26E9, U+1F438, U+2728) is deliberately not used.
 
 ## Layout
 
+```text
+extensions/sanae-mascot/
+  index.ts          host: chrome, header, commands, events, switching
+  profiles.ts       Sanae + Machitan data and personality layers
+  state.ts          ~/.pi/agent/mascot-state.json (atomic writes)
+  sanae-*.txt       Sanae art
+  machitan-*.txt    Machitan art
+themes/
+  moriya-shrine.json
+  tannhauser-turf.json
 ```
-extensions/sanae-mascot/   mascot, chrome, verbs, temperament
-themes/moriya-shrine.json  shrine palette (pi.themes manifest entry)
+
+## Development
+
+Work in a normal clone, not the managed `~/.pi/agent/git/...` checkout: a git
+package can be fetched and reset by `pi update`, which would discard
+uncommitted edits. Test only the local extension with:
+
+```bash
+pi -ne -e ./extensions/sanae-mascot --theme ./themes
 ```
+
+`-ne` disables extension discovery, so the installed copy does not double-load.
+`PI_MASCOT_STATE=/tmp/mascot-state.json` keeps test state out of your real
+config. After committing and pushing, run `pi update --extensions` and
+`/reload`.
 
 ## License
 

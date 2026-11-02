@@ -1,9 +1,14 @@
 {
   "name": "sanae-mascot-pi",
-  "version": "1.0.0",
-  "description": "Sanae Kochiya-inspired wind-priestess mascot for pi: braille header art, shrine commands, and an unnamed confident-newcomer temperament.",
+  "version": "1.1.0",
+  "description": "Two Umamusume mascots for pi: Sanae Kochiya (Moriya Shrine) and Matikanetannhauser (Machitan / Mambo) — braille headers, track/shrine themes, plaque editor, and switchable temperaments.",
   "keywords": [
-    "pi-package"
+    "pi-package",
+    "umamusume",
+    "sanae",
+    "matikanetannhauser",
+    "machitan",
+    "mambo"
   ],
   "license": "Unlicense",
   "pi": {

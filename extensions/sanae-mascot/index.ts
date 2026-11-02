@@ -1,28 +1,40 @@
 /**
- * Sanae Kochiya Mascot for pi (torii icon in header)
+ * Umamusume mascots for pi: Sanae Kochiya (Moriya Shrine) and
+ * Matikanetannhauser (Machitan / Mambo).
  *
- * NOTE on symbols: this system has no emoji font and nothing covers U+26E9/U+1F438/U+2728,
- * so shrine/frog/sparkles emoji all render as tofu. We use only glyphs verified with
- * `fc-list :charset=...` + fontTools glyph-name lookup on the installed Nerd Fonts:
- * - \uEEE6 = Nerd fa-torii-gate, real torii icon (178 fonts)
- * - \uEDF8 = Nerd fa-frog (178 fonts; NOT F52E, that's a git-ish icon)
+ * Glyph policy: this system has no emoji font, so use only glyphs verified with
+ * `fc-list :charset=...` on the installed Nerd Fonts:
+ * - \uEEE6 = Nerd fa-torii-gate (Sanae, 178 fonts)
+ * - \uEDF8 = Nerd fa-frog (Sanae, 178 fonts)
+ * - \uEF51 = Nerd fa-horse-head (Machitan, 178 fonts)
  * - ✦ (U+2726) sparkle, confirmed rendering by user
+ * - ❯ (U+276F) prompt gutter, 422 fonts
  * Do not reintroduce emoji without checking coverage first.
  *
- * Moriya Shrine wind priestess as your coding companion.
- * - sanae-full.txt (27x47, original) shown via /sanae
- * - sanae-compact-14.txt (14x24, slim uniform squeeze) is the header default —
- *   all green, side text on the right.
- * - sanae-compact-14.txt also used for /miracle
+ * Art:
+ * - Sanae: sanae-full.txt (27x47) via /sanae; sanae-compact-14.txt (14x24) header.
+ * - Machitan: machitan-full.txt (18x35) via /machitan; machitan-header.txt (11x29)
+ *   header. Machitan uses density-aware coloring: full/empty braille cells are
+ *   dim background, partial cells are the bright portrait.
  *
  * Commands:
- *   /sanae [msg]    - summon full Sanae art + shrine quote
- *   /miracle <task> - Sanae blesses your task (compact art)
- *   /pray           - pray for build/tests
- *   /sanae-mode     - toggle Sanae-inspired temperament (unnamed, no roleplay)
- *   /sanae-header   - cycle header: squeezed -> full -> mini -> off
- *   /sanae-editor    - toggle shrine chrome (plaque editor + footer): on -> stock
- *   /sanae-vim       - toggle vim modal editing in the plaque editor
+ *   /sanae [msg]       - summon full Sanae art + shrine quote
+ *   /miracle <task>    - Sanae blesses your task (compact art)
+ *   /pray              - pray for build/tests
+ *   /sanae-mode        - toggle Sanae-inspired temperament (unnamed, no roleplay)
+ *   /sanae-header      - cycle header: squeezed -> full -> mini -> off
+ *   /sanae-editor      - toggle shrine chrome (plaque editor + footer): on -> stock
+ *   /sanae-vim         - toggle vim modal editing in the plaque editor
+ *   /machitan [msg]    - summon full Machitan art + quote
+ *   /mambo             - compact Machitan art + festival-mambo quote
+ *   /train <task>      - Machitan blesses your task (compact art)
+ *   /machitan-mode     - cycle Machitan persona: flavor -> mambo -> off
+ *   /mambo-fact        - print a random Matikanetannhauser fact
+ *   /mascot [id]       - switch mascot: sanae | machitan (or pick from a list)
+ *   /mascot-header     - cycle the active mascot's header
+ *   /mascot-editor     - toggle chrome (plaque editor + footer) <-> stock
+ *   /mascot-vim        - toggle vim modal editing
+ *   /mascot-theme      - toggle mascot theme auto-swap
  */
 
 import { CustomEditor, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -31,56 +43,56 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  MACHITAN,
+  PROFILES,
+  SANA,
+  type HeaderMode,
+  type MachitanMode,
+  type MascotId,
+  type MascotProfile,
+  type SideLine,
+} from "./profiles";
+import { loadMascotState, saveMascotState } from "./state";
 
-interface SanaeArtData {
+interface MascotArtData {
+  mascot?: MascotId;
   title: string;
   lines: string[];
   quote: string;
   timestamp: number;
 }
 
-const QUOTES = [
-  "Moriya Shrine blessing! Let's summon a miracle today! ✦",
-  "Kanako-sama, Suwako-sama, watch over this code! \uEDF8",
-  "Wind priestess, on duty! No curse (or bug) can stand!",
-  "Faith +1! Your code is gathering gods!",
-  "Leave the miracles to me — you handle the keyboard!",
-  "A strong wind is blowing... a deploy wind!",
-];
+// Prompt gutter glyph: ❯ (U+276F). Verified with `fc-list :charset=276F`
+// (422 fonts, same family as Starship/powerlevel10k prompts). Width 1.
+const PROMPT_GLYPH = "❯";
 
-const BLESSINGS = [
-  "May your tests pass and your types be sound.",
-  "I offer this gohei wave: \uEEE6 E---< ... bugs purified!",
-  "Frogs croak, snakes shed — legacy code renews!",
-  "Miracle Moe! Merge conflicts, disperse!",
-];
+const HEADER_CYCLE: HeaderMode[] = ["squeezed", "full", "mini", "off"];
 
-// Claude-style rotating verbs for the streaming working indicator.
-// One verb is picked per turn (see turn_start); only the dots animate.
-// Glyph policy: torii prefix only, no trailing symbols.
-const WORKING_VERBS = [
-  "Gathering faith",
-  "Waving gohei",
-  "Purifying curses",
-  "Blessing code",
-  "Channeling wind",
-  "Offering prayers",
-  "Consulting gods",
-  "Chasing frogs",
-  "Shedding curses",
-  "Summoning miracles",
-  "Reading omikuji",
-  "Ringing bells",
-  "Sweeping shrine",
-  "Dispelling mist",
-  "Befriending snakes",
-  "Brewing miracles",
-];
+// Normal-mode key → escape/control sequence sent to the base editor.
+// Only encodings verified end-to-end (arrows, ^A/^E, ^K, \x1b[3~ delete).
+// Word motions (w e b dw cw) are NOT here: stock findWordForward stops ON
+// whitespace and ESC-letter sends proved terminal-fragile, so those are
+// computed from text+cursor below (true vim semantics) and stepped with
+// arrows / forward-delete only.
+const VIM_NORMAL_KEYS: Record<string, string> = {
+  h: "\x1b[D", // left
+  j: "\x1b[B", // down (older history at top)
+  k: "\x1b[A", // up
+  l: "\x1b[C", // right
+  "0": "\x01", // line start
+  $: "\x05", // line end
+  x: "\x1b[3~", // delete char under cursor
+};
 
-function setShrineWorkingVerb(ctx: any, verb: string) {
+function pick(arr: string[]): string {
+  return arr[Math.floor(Math.random() * arr.length)]!;
+}
+
+function setMascotWorkingVerb(ctx: any, icon: string, verb: string) {
   try {
     const theme = ctx.ui.theme;
-    const base = `\uEEE6 ${verb}`;
+    const base = `${icon} ${verb}`;
     ctx.ui.setWorkingIndicator({
       frames: [".", "..", "..."].map((d) => theme.fg("accent", `${base}${d}`)),
       intervalMs: 400,
@@ -90,23 +102,15 @@ function setShrineWorkingVerb(ctx: any, verb: string) {
   }
 }
 
-function applyWorkingIndicator(ctx: any) {
+function applyWorkingIndicator(ctx: any, profile: MascotProfile) {
   // Hide the stock "Working" label; the verb frames carry the meaning.
   try {
     ctx.ui.setWorkingMessage("");
   } catch {
     // ignore
   }
-  setShrineWorkingVerb(ctx, pick(WORKING_VERBS));
+  setMascotWorkingVerb(ctx, profile.icon, pick(profile.verbs));
 }
-
-function pick(arr: string[]): string {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
-// Prompt gutter glyph: ❯ (U+276F). Verified with `fc-list :charset=276F`
-// (422 fonts, same family as Starship/powerlevel10k prompts). Width 1.
-const PROMPT_GLYPH = "❯";
 
 function formatTokens(n: number): string {
   if (n < 1000) return `${n}`;
@@ -178,7 +182,7 @@ function countGraphemes(s: string): number {
 // stock: the "(auto)" compaction marker is always shown (flag not exposed
 // to extensions; matches the default setting), and the subscription "(sub)"
 // marker only triggers for subscription-backed providers known statically.
-function renderShrineFooter(width: number, ctx: any, theme: any, footerData: any): string[] {
+function renderMascotFooter(width: number, ctx: any, theme: any, footerData: any): string[] {
   let input = 0, output = 0, cacheRead = 0, cacheWrite = 0, cost = 0;
   let latestCacheHitRate: number | undefined;
   for (const e of ctx.sessionManager.getEntries()) {
@@ -307,7 +311,7 @@ function renderShrineFooter(width: number, ctx: any, theme: any, footerData: any
   return lines;
 }
 
-function applyShrineFooter(ctx: any) {
+function applyMascotFooter(ctx: any) {
   if (!ctx.hasUI) return;
   ctx.ui.setFooter((tui: any, theme: any, footerData: any) => {
     const unsub = footerData.onBranchChange(() => tui.requestRender());
@@ -316,7 +320,7 @@ function applyShrineFooter(ctx: any) {
       invalidate() {},
       render(width: number): string[] {
         try {
-          return renderShrineFooter(width, ctx, theme, footerData);
+          return renderMascotFooter(width, ctx, theme, footerData);
         } catch {
           return [];
         }
@@ -352,58 +356,195 @@ function loadArtFile(name: string): string[] | null {
   return null;
 }
 
-function loadFullArt(): string[] {
-  return (
-    loadArtFile("sanae-full.txt") ?? [
+function loadFullArt(profile: MascotProfile): string[] {
+  const art = loadArtFile(profile.art.full) ?? loadArtFile(profile.art.header);
+  if (art) return art;
+  if (profile.id === "sanae") {
+    return [
       "  \uEEE6  Sanae Kochiya",
       "   (｡◕‿◕｡)  \uEDF8",
       "   E---< gohei!",
-    ]
+    ];
+  }
+  return [
+    `  ${profile.icon}  ${profile.name}`,
+    `   "Talent takes time!"`,
+    `   mambo~ ✦`,
+  ];
+}
+
+// Header art: slim squeeze reads much better than the wide full portrait.
+// Falls back to the full art if the slim file is missing.
+function loadHeaderArt(profile: MascotProfile): string[] {
+  return loadArtFile(profile.art.header) ?? loadFullArt(profile);
+}
+
+function loadCompactArt(profile: MascotProfile): string[] {
+  return loadArtFile(profile.art.compact) ?? loadFullArt(profile);
+}
+
+// Machitan's source art uses full braille cells (⣿) or sparse background
+// cells (⡀) as a backdrop. Coloring every cell the same would flatten the
+// portrait into a block, so group runs: background-like cells go dim, the
+// partial cells that form the character stay bright.
+function colorDensityLine(
+  line: string,
+  theme: any,
+  bright: string,
+  dim: string,
+): string {
+  if (!line) return "";
+  let out = "";
+  let run = "";
+  let runDim = false;
+  const flush = () => {
+    if (!run) return;
+    out += theme.fg(runDim ? dim : bright, run);
+    run = "";
+  };
+  for (const ch of line) {
+    const cp = ch.codePointAt(0) ?? 0;
+    let isDim = false;
+    if (cp >= 0x2800 && cp <= 0x28ff) {
+      let bits = cp - 0x2800;
+      let pop = 0;
+      for (; bits; bits &= bits - 1) pop++;
+      isDim = pop <= 1 || pop >= 8;
+    } else if (ch === " ") {
+      isDim = true;
+    }
+    if (run && isDim !== runDim) flush();
+    runDim = isDim;
+    run += ch;
+  }
+  flush();
+  return out;
+}
+
+function colorArtLine(profile: MascotProfile, line: string, theme: any): string {
+  if (profile.artStyle === "uniform") return theme.fg(profile.artColor, line);
+  return colorDensityLine(line, theme, profile.artColor, profile.artBackgroundColor);
+}
+
+function renderSideLine(line: SideLine | undefined, theme: any): string {
+  if (!line || !line.text) return "";
+  const text = line.text;
+  switch (line.tone) {
+    case "title":
+      return theme.bold(theme.fg("accent", text));
+    case "subtitle":
+      return theme.fg("dim", text);
+    case "success":
+      return theme.fg("success", text);
+    case "warning":
+      return theme.fg("warning", text);
+    case "muted":
+      return theme.fg("muted", text);
+    case "code":
+      return theme.fg("mdCode", text);
+    case "italic":
+      return theme.italic ? theme.italic(theme.fg("muted", text)) : theme.fg("muted", text);
+    case "commands":
+      // highlight /commands in accent
+      return text
+        .split(" ")
+        .map((w) => (w.startsWith("/") ? theme.fg("accent", w) : theme.fg("dim", w)))
+        .join(" ");
+    case "dim":
+    default:
+      return theme.fg("dim", text);
+  }
+}
+
+function buildSide(
+  profile: MascotProfile,
+  n: number,
+  ctx: any,
+  level: number,
+): SideLine[] {
+  const modelId: string = ctx?.model?.id ?? ctx?.model?.name ?? "no-model";
+  let cwdName = "";
+  try {
+    const parts = String(ctx?.cwd ?? "").split("/").filter(Boolean);
+    cwdName = parts.length ? parts[parts.length - 1]! : "";
+  } catch {
+    // ignore
+  }
+  const side = profile.side(n, { modelId, cwdName, level });
+  if (side.length >= n) return side.slice(0, n);
+  return [...side, ...Array.from({ length: n - side.length }, () => ({ text: "" }))];
+}
+
+function renderArtEntry(
+  entry: any,
+  { expanded }: { expanded: boolean },
+  theme: any,
+) {
+  const data: MascotArtData = entry.data ?? {
+    mascot: "sanae",
+    title: "Sanae",
+    lines: [],
+    quote: "",
+    timestamp: Date.now(),
+  };
+  const profile = PROFILES[data.mascot ?? "sanae"];
+  const box = new Box(1, 1, (t) => theme.bg("customMessageBg", t));
+  box.addChild(
+    new Text(
+      `${theme.fg("accent", profile.icon + " " + data.title)}  ${theme.fg(
+        "dim",
+        new Date(data.timestamp ?? Date.now()).toLocaleTimeString(),
+      )}`,
+      0,
+      0,
+    ),
   );
+  // Braille art: Sanae stays uncolored for shape fidelity; Machitan's source
+  // art has a full/empty-cell backdrop, so it must use the density colorer in
+  // the transcript too or the backdrop becomes a solid foreground block.
+  for (const line of data.lines) {
+    box.addChild(new Text(profile.artStyle === "density" ? colorArtLine(profile, line, theme) : line, 0, 0));
+  }
+  box.addChild(new Text(theme.fg("success", `✦ ${data.quote}`), 0, 0));
+  if (expanded) {
+    box.addChild(new Text(theme.fg("dim", profile.art.credit), 0, 0));
+  }
+  return box;
 }
 
-// Header art: slim 14-line uniform squeeze (24 cols) — reads much better than
-// the wide 15-line vertical squeeze. Falls back to full art if missing.
-function loadHeaderArt(): string[] {
-  return loadArtFile("sanae-compact-14.txt") ?? loadFullArt();
-}
-
-function loadCompactArt(): string[] {
-  return loadArtFile("sanae-compact-14.txt") ?? loadFullArt();
-}
-
-export default function sanaeMascot(pi: ExtensionAPI) {
-  let sanaeMode = true; // personality injection
+export default function umaMascot(pi: ExtensionAPI) {
+  const initialState = loadMascotState();
+  let activeId: MascotId = initialState.active;
+  let sanaeMode = initialState.sanaeMode;
+  let machitanMode: MachitanMode = initialState.machitanMode;
   // You're right: header scrolls away with transcript, so big art is fine.
-  // Cycle: slim (14, default) -> full (27) -> mini (2) -> off
-  let headerMode: "squeezed" | "full" | "mini" | "off" = "squeezed";
-  let miracles = 0;
+  // Cycle: slim (default) -> full -> mini (2 lines) -> off
+  let headerMode: HeaderMode = initialState.headerMode;
+  let plaqueOn = initialState.chrome;
+  let vimOn = initialState.vim;
+  let autoTheme = initialState.autoTheme;
+  const levels: Record<MascotId, number> = { sanae: 0, machitan: 0 };
   let thinkingLabel = "medium";
-  let plaqueOn = true;
-  let vimOn = true;
   let tuiRef: any = null;
   let plaqueEd: PlaqueEditor | null = null;
 
-  // Normal-mode key → escape/control sequence sent to the base editor.
-  // Only encodings verified end-to-end (arrows, ^A/^E, ^K, \x1b[3~ delete).
-  // Word motions (w e b dw cw) are NOT here: stock findWordForward stops ON
-  // whitespace and ESC-letter sends proved terminal-fragile, so those are
-  // computed from text+cursor below (true vim semantics) and stepped with
-  // arrows / forward-delete only.
-  const VIM_NORMAL_KEYS: Record<string, string> = {
-    h: "\x1b[D", // left
-    j: "\x1b[B", // down (older history at top)
-    k: "\x1b[A", // up
-    l: "\x1b[C", // right
-    "0": "\x01", // line start
-    $: "\x05", // line end
-    x: "\x1b[3~", // delete char under cursor
-  };
+  const profile = (): MascotProfile => PROFILES[activeId];
 
-  // Minimal themed editor: plaque top border (mode tag left, Faith Lv +
+  const save = () =>
+    saveMascotState({
+      active: activeId,
+      sanaeMode,
+      machitanMode,
+      headerMode,
+      chrome: plaqueOn,
+      vim: vimOn,
+      autoTheme,
+    });
+
+  // Minimal themed editor: plaque top border (mode tag left, mascot level +
   // thinking right, thinking-colored dashes), colored Nerd prompt gutter on
   // the first content line, no bottom border. Optional vim modal editing
-  // (toggle: /sanae-vim). Extends CustomEditor so app keys (escape to abort,
+  // (toggle: /mascot-vim). Extends CustomEditor so app keys (escape to abort,
   // ctrl+d, model switching, autocomplete, IME cursor) keep working. Labels
   // stay uncolored (terminal default) so they survive theme switches; dashes
   // and gutter use borderColor so thinking/bash recolors apply automatically.
@@ -622,18 +763,18 @@ export default function sanaeMascot(pi: ExtensionAPI) {
     }
   }
 
-  function applyShrineChrome(ctx: any) {
+  function applyMascotChrome(ctx: any) {
     if (!ctx.hasUI) return;
     ctx.ui.setEditorComponent((tui: any, theme: any, kb: any) => {
       tuiRef = tui;
       const ed = new PlaqueEditor(tui, theme, kb);
       ed.vimOn = vimOn;
       ed.fullTheme = ctx.ui.theme;
-      ed.getPlaque = () => `\uEEE6 Faith Lv.${Math.min(99, miracles)} · ${thinkingLabel}`;
+      ed.getPlaque = () => profile().plaque(levels[activeId], thinkingLabel);
       plaqueEd = ed;
       return ed;
     });
-    applyShrineFooter(ctx);
+    applyMascotFooter(ctx);
   }
 
   function restoreStockChrome(ctx: any) {
@@ -641,138 +782,158 @@ export default function sanaeMascot(pi: ExtensionAPI) {
     ctx.ui.setFooter(undefined);
   }
 
-  const getArt = () => loadFullArt();
-  const getHeaderLines = (): string[] => {
-    if (headerMode === "full") return getArt();
-    if (headerMode === "squeezed") return loadHeaderArt();
-    return [];
-  };
-
-  // Render full art as a durable transcript entry (not sent to LLM)
-  pi.registerEntryRenderer<SanaeArtData>("sanae-art", (entry, { expanded }, theme) => {
-    const data = entry.data ?? { title: "Sanae", lines: [], quote: "", timestamp: Date.now() };
-    const box = new Box(1, 1, (t) => theme.bg("customMessageBg", t));
-    box.addChild(new Text(`${theme.fg("accent", "\uEEE6 " + data.title)}  ${theme.fg("dim", new Date(data.timestamp).toLocaleTimeString())}`, 0, 0));
-    // Braille art: keep uncolored for shape fidelity, dim frame
-    for (const line of data.lines) {
-      box.addChild(new Text(line, 0, 0));
-    }
-    box.addChild(new Text(theme.fg("success", `✦ ${data.quote}`), 0, 0));
-    if (expanded) {
-      box.addChild(
-        new Text(theme.fg("dim", "Sanae Kochiya · Moriya Shrine wind priestess · art: sanae-full.txt (27 lines, on-demand only)"), 0, 0),
-      );
-    }
-    return box;
-  });
-
-  function buildSideRaw(n: number, ctx: any): string[] {
-    const modelId: string = ctx?.model?.id ?? ctx?.model?.name ?? "no-model";
-    let cwdName = "";
+  function maybeSwitchTheme(ctx: any, id: MascotId): boolean {
+    if (!autoTheme) return false;
     try {
-      const parts = String(ctx?.cwd ?? "").split("/").filter(Boolean);
-      cwdName = parts.length ? parts[parts.length - 1] : "";
-    } catch { /* ignore */ }
-    const full = [
-      "\uEEE6 Sanae Kochiya",
-      "Moriya Shrine · Wind Priestess",
-      "",
-      "\uEDF8 Blessed by Kanako & Suwako",
-      "✦ Miracles ready! Bugs = curses!",
-      "",
-      `Faith Lv.${Math.min(99, miracles)} · Frogs croak!`,
-      `Model: ${modelId}`,
-      cwdName ? `Dir: ${cwdName} · Wind blows... deploy!` : "Wind blows... deploy wind!",
-      "",
-      "/sanae full · /miracle bless",
-      "/pray hope · /sanae-header size",
-      "",
-      `"Leave miracles to me!"`,
-      "— Sanae, probably",
-      "",
-      "Spell cards:",
-      `✦ Miracle "Daytime Guest Stars"`,
-      `✦ Wind "Wind God's Fan"`,
-      "✦ Snake & Frog tag-team!",
-      "",
-      "Gohei: E---< purified!",
-      "Snakes shed, frogs sing,",
-      "legacy code renews!",
-      "",
-      "A strong wind blows... deploy!",
-      "\uEDF8 \uEEE6 ✦",
-    ];
-    if (n <= full.length) return full.slice(0, n);
-    const out = [...full];
-    while (out.length < n) out.push("");
-    return out;
-  }
-
-  function colorSide(i: number, text: string, theme: any): string {
-    if (!text) return "";
-    if (i === 0) return theme.bold(theme.fg("accent", text));
-    if (i === 1) return theme.fg("dim", text);
-    if (i === 3) return theme.fg("success", text);
-    if (i === 4) return theme.fg("warning", text);
-    if (i === 6) return theme.fg("success", text);
-    if (i === 7 || i === 8) return theme.fg("muted", text);
-    if (i === 10 || i === 11) {
-      // highlight /commands in accent
-      return text
-        .split(" ")
-        .map((w) => (w.startsWith("/") ? theme.fg("accent", w) : theme.fg("dim", w)))
-        .join(" ");
+      const current = pi.getSettings()?.theme;
+      // Only swap between the two mascot palettes. A custom/stock theme is the
+      // user's choice and must never be clobbered by a mascot switch.
+      if (current !== "moriya-shrine" && current !== "tannhauser-turf") return false;
+      const target = PROFILES[id].theme;
+      if (current === target) return false;
+      const result = ctx.ui.setTheme(target);
+      if (result?.success) return true;
+      ctx.ui.notify(`Theme ${target} unavailable: ${result?.error ?? "unknown"}`, "warning");
+    } catch {
+      // ignore
     }
-    if (i === 13) return theme.italic ? theme.italic(theme.fg("muted", text)) : theme.fg("muted", text);
-    if (i >= 17 && i <= 19) return theme.fg("mdCode", text);
-    if (i === 21) return theme.fg("success", text);
-    return theme.fg("dim", text);
+    return false;
   }
 
-  function colorArtLine(_i: number, _n: number, line: string, theme: any): string {
-    // All green — per-region coloring looked patchy on braille, green reads best.
-    return theme.fg("success", line);
+  function switchTo(id: MascotId, ctx: any) {
+    const changed = activeId !== id;
+    activeId = id;
+    if (changed) save();
+    const themeChanged = maybeSwitchTheme(ctx, id);
+    if (!changed && !themeChanged) return;
+    applyHeader(ctx);
+    if (plaqueOn) applyMascotChrome(ctx);
+    applyWorkingIndicator(ctx, profile());
+    try {
+      tuiRef?.requestRender();
+    } catch {
+      // ignore
+    }
   }
 
   function applyHeader(ctx: any) {
-    if (headerMode === "off" || ctx.mode !== "tui") return;
+    if (ctx.mode !== "tui") return;
+    if (headerMode === "off") {
+      // Empty custom header — NOT setHeader(undefined), which would restore
+      // the stock pi header. This keeps it truly headerless, including when
+      // the persisted state starts in "off".
+      ctx.ui.setHeader(() => ({ invalidate() {}, render: (_w: number) => [] }));
+      return;
+    }
+    const p = profile();
     ctx.ui.setHeader((_tui: any, theme: any) => ({
       invalidate() {},
       render(width: number): string[] {
         const out: string[] = [];
         if (headerMode === "mini") {
-          const green = (t: string) => theme.fg("success", t);
-          const blue = (t: string) => theme.fg("accent", t);
-          const dim = (t: string) => theme.fg("dim", t);
-          out.push(
-            truncateToWidth(`${blue("\uEEE6")} ${green("Sanae Kochiya")} ${dim("· Moriya wind priestess · /sanae for full art")}`, width),
-          );
-          out.push(truncateToWidth(`${dim("  (｡◕‿◕｡) \uEDF8 —E  miracles ready!")}`, width));
+          for (const line of p.mini(theme)) out.push(truncateToWidth(line, width));
           return out;
         }
-        const rawArt = getHeaderLines();
+        const rawArt = headerMode === "full" ? loadFullArt(p) : loadHeaderArt(p);
         const n = rawArt.length;
         const artW = Math.max(10, ...rawArt.map((l) => visibleWidth(l)));
         const gap = "  ";
-        const sideRaw = buildSideRaw(n, ctx);
+        const side = buildSide(p, n, ctx, levels[activeId]);
         const minSide = 22;
         // Narrow terminal? Stack instead of side-by-side.
         if (width < artW + gap.length + minSide) {
-          rawArt.forEach((line, i) => out.push(truncateToWidth(colorArtLine(i, n, line, theme), width)));
-          out.push(truncateToWidth(theme.fg("dim", "\uEEE6 Sanae Kochiya · /sanae-header to change size"), width));
+          rawArt.forEach((line) => out.push(truncateToWidth(colorArtLine(p, line, theme), width)));
+          out.push(truncateToWidth(theme.fg("dim", `${p.icon} ${p.name} · ${p.headerHint}`), width));
           return out;
         }
         const sideW = width - artW - gap.length;
         for (let i = 0; i < n; i++) {
           const rawLeft = rawArt[i] ?? "";
           const pad = Math.max(0, artW - visibleWidth(rawLeft));
-          const left = colorArtLine(i, n, rawLeft, theme) + " ".repeat(pad);
-          const right = truncateToWidth(colorSide(i, sideRaw[i] ?? "", theme), sideW);
+          const left = colorArtLine(p, rawLeft, theme) + " ".repeat(pad);
+          const right = truncateToWidth(renderSideLine(side[i], theme), sideW);
           out.push(left + gap + right);
         }
         return out;
       },
     }));
+  }
+
+  function cycleHeader(ctx: any) {
+    const idx = HEADER_CYCLE.indexOf(headerMode);
+    headerMode = HEADER_CYCLE[(idx + 1) % HEADER_CYCLE.length]!;
+    save();
+    if (headerMode === "off") {
+      ctx.ui.setHeader(() => ({ invalidate() {}, render: (_w: number) => [] }));
+      ctx.ui.notify("Header hidden (stock pi header stays off too)", "info");
+      return;
+    }
+    applyHeader(ctx);
+    const p = profile();
+    const size =
+      headerMode === "full"
+        ? `${loadFullArt(p).length} lines (full)`
+        : headerMode === "squeezed"
+          ? `${loadHeaderArt(p).length} lines (${p.id === "sanae" ? "slim green" : "slim blue"})`
+          : "mini (2 lines)";
+    ctx.ui.notify(`${p.icon} ${p.shortName} header: ${size}`, "info");
+  }
+
+  function toggleChrome(ctx: any) {
+    plaqueOn = !plaqueOn;
+    save();
+    if (!plaqueOn) {
+      restoreStockChrome(ctx);
+      ctx.ui.notify("Stock editor + footer restored", "info");
+    } else {
+      applyMascotChrome(ctx);
+      ctx.ui.notify(profile().chromeOnMessage, "info");
+    }
+  }
+
+  function toggleVim(ctx: any) {
+    vimOn = !vimOn;
+    save();
+    if (plaqueEd) {
+      plaqueEd.vimOn = vimOn;
+      if (!vimOn) plaqueEd.vimMode = "insert";
+    }
+    try {
+      tuiRef?.requestRender();
+    } catch {
+      // ignore
+    }
+    ctx.ui.notify(vimOn ? "Vim motions ON (esc: normal mode, i: insert)" : "Vim motions OFF (modeless)", "info");
+  }
+
+  function cycleMachitanMode(ctx: any) {
+    switchTo("machitan", ctx);
+    machitanMode = machitanMode === "flavor" ? "mambo" : machitanMode === "mambo" ? "off" : "flavor";
+    save();
+    const message =
+      machitanMode === "mambo"
+        ? "\uEF51 MAMBO MODE! Full Machitan voice — still all business. Ei ei mun!"
+        : machitanMode === "flavor"
+          ? "\uEF51 Machitan flavor ON — warm, upbeat, game references in moderation."
+          : "\uEF51 Machitan persona OFF. Just your coding partner.";
+    ctx.ui.notify(message, "info");
+  }
+
+  function appendArt(profile: MascotProfile, title: string, lines: string[], quote: string) {
+    pi.appendEntry<MascotArtData>(profile.art.entryType, {
+      mascot: profile.id,
+      title,
+      lines,
+      quote,
+      timestamp: Date.now(),
+    });
+  }
+
+  // Render full art as a durable transcript entry (not sent to LLM)
+  for (const p of [SANA, MACHITAN]) {
+    pi.registerEntryRenderer<MascotArtData>(p.art.entryType, (entry, opts, theme) =>
+      renderArtEntry(entry, opts, theme),
+    );
   }
 
   pi.on("session_start", async (_event, ctx) => {
@@ -783,15 +944,17 @@ export default function sanaeMascot(pi: ExtensionAPI) {
       // keep default
     }
     applyHeader(ctx);
-    applyWorkingIndicator(ctx);
-    if (plaqueOn) applyShrineChrome(ctx);
+    applyWorkingIndicator(ctx, profile());
+    if (plaqueOn) applyMascotChrome(ctx);
     try {
-      // Plaque shows Faith now — clear the old footer pill.
+      // Plaque shows the level now — clear any old footer pill.
       (ctx.ui as any).setStatus?.("sanae", undefined);
+      (ctx.ui as any).setStatus?.("mascot", undefined);
     } catch {
       // ignore
     }
-    ctx.ui.notify(`\uEEE6 ${pick(QUOTES)}  (/sanae to summon me!)`, "info");
+    const p = profile();
+    ctx.ui.notify(`${p.icon} ${pick(p.quotes)}  (${p.summonHint})`, "info");
   });
 
   pi.on("thinking_level_select", async (event, _ctx) => {
@@ -806,14 +969,15 @@ export default function sanaeMascot(pi: ExtensionAPI) {
   pi.on("turn_start", async (_event, ctx) => {
     if (!ctx.hasUI) return;
     // Fresh verb per thinking process; dots animate within it.
-    setShrineWorkingVerb(ctx, pick(WORKING_VERBS));
+    const p = profile();
+    setMascotWorkingVerb(ctx, p.icon, pick(p.verbs));
   });
 
   pi.on("turn_end", async (_event, ctx) => {
     if (!ctx.hasUI) return;
-    miracles++;
+    levels[activeId] += 1;
     try {
-      tuiRef?.requestRender(); // refresh plaque Faith Lv
+      tuiRef?.requestRender(); // refresh plaque level
     } catch {
       // ignore
     }
@@ -821,28 +985,29 @@ export default function sanaeMascot(pi: ExtensionAPI) {
 
   pi.registerCommand("sanae", {
     description: "Summon full Sanae Kochiya art + shrine quote",
-    handler: async (args, _ctx) => {
-      const lines = getArt();
+    handler: async (args, ctx) => {
+      switchTo("sanae", ctx);
       const extra = args.trim();
-      pi.appendEntry<SanaeArtData>("sanae-art", {
-        title: extra ? `Sanae — ${extra}` : "Sanae Kochiya, has arrived!",
-        lines,
-        quote: pick(QUOTES),
-        timestamp: Date.now(),
-      });
+      appendArt(
+        SANA,
+        extra ? `Sanae — ${extra}` : "Sanae Kochiya, has arrived!",
+        loadFullArt(SANA),
+        pick(SANA.quotes),
+      );
     },
   });
 
   pi.registerCommand("miracle", {
     description: "Sanae blesses your current task as a miracle",
     handler: async (args, ctx) => {
+      switchTo("sanae", ctx);
       const task = args.trim() || "this code";
-      pi.appendEntry<SanaeArtData>("sanae-art", {
-        title: `Miracle for: ${task}`,
-        lines: loadCompactArt(), // 14-line version, not a crop
-        quote: `${pick(BLESSINGS)} (full art: /sanae)`,
-        timestamp: Date.now(),
-      });
+      appendArt(
+        SANA,
+        `Miracle for: ${task}`,
+        loadCompactArt(SANA), // 14-line version, not a crop
+        `${pick(SANA.blessings)} (full art: /sanae)`,
+      );
       ctx.ui.notify(`✦ Miracle invoked for: ${task}`, "info");
     },
   });
@@ -850,84 +1015,210 @@ export default function sanaeMascot(pi: ExtensionAPI) {
   pi.registerCommand("pray", {
     description: "Pray at Moriya Shrine for your build/tests",
     handler: async (_args, ctx) => {
-      ctx.ui.notify(`(‐人‐) ${pick(BLESSINGS)}`, "info");
+      switchTo("sanae", ctx);
+      ctx.ui.notify(`(‐人‐) ${pick(SANA.blessings)}`, "info");
     },
   });
 
   pi.registerCommand("sanae-mode", {
     description: "Toggle Sanae-inspired temperament (unnamed, no roleplay)",
     handler: async (_args, ctx) => {
+      switchTo("sanae", ctx);
       sanaeMode = !sanaeMode;
-      ctx.ui.notify(sanaeMode ? "\uEEE6 Sanae-mode ON! Miracles incoming!" : "Sanae-mode OFF. I'll watch quietly. \uEDF8", "info");
+      save();
+      ctx.ui.notify(
+        sanaeMode ? "\uEEE6 Sanae-mode ON! Miracles incoming!" : "Sanae-mode OFF. I'll watch quietly. \uEDF8",
+        "info",
+      );
     },
   });
 
   pi.registerCommand("sanae-header", {
     description: "Cycle Sanae header size: slim -> full -> mini -> off (no pi header)",
     handler: async (_args, ctx) => {
-      headerMode = headerMode === "squeezed" ? "full" : headerMode === "full" ? "mini" : headerMode === "mini" ? "off" : "squeezed";
-      if (headerMode === "off") {
-        // Empty custom header — NOT setHeader(undefined), which would restore
-        // the stock pi header. This keeps it truly headerless.
-        ctx.ui.setHeader(() => ({ invalidate() {}, render: (_w: number) => [] }));
-        ctx.ui.notify("Header hidden (stock pi header stays off too)", "info");
-      } else {
-        applyHeader(ctx);
-        const size =
-          headerMode === "full" ? `${getArt().length} lines (full)` : headerMode === "squeezed" ? `${loadHeaderArt().length} lines (slim green)` : "mini (2 lines)";
-        ctx.ui.notify(`\uEEE6 Sanae header: ${size}`, "info");
-      }
+      switchTo("sanae", ctx);
+      cycleHeader(ctx);
     },
   });
 
   pi.registerCommand("sanae-editor", {
     description: "Toggle shrine chrome (plaque editor + footer): on -> stock",
     handler: async (_args, ctx) => {
-      plaqueOn = !plaqueOn;
-      if (!plaqueOn) {
-        restoreStockChrome(ctx);
-        ctx.ui.notify("Stock editor + footer restored", "info");
-      } else {
-        applyShrineChrome(ctx);
-        ctx.ui.notify("\uEEE6 Shrine chrome on (plaque editor + footer)", "info");
-      }
+      switchTo("sanae", ctx);
+      toggleChrome(ctx);
     },
   });
 
   pi.registerCommand("sanae-vim", {
     description: "Toggle vim modal editing in the plaque editor",
     handler: async (_args, ctx) => {
-      vimOn = !vimOn;
-      if (plaqueEd) {
-        plaqueEd.vimOn = vimOn;
-        if (!vimOn) plaqueEd.vimMode = "insert";
-      }
-      try {
-        tuiRef?.requestRender();
-      } catch {
-        // ignore
-      }
-      ctx.ui.notify(vimOn ? "Vim motions ON (esc: normal mode, i: insert)" : "Vim motions OFF (modeless)", "info");
+      switchTo("sanae", ctx);
+      toggleVim(ctx);
     },
   });
 
-  // Temperament layer: Sanae-inspired traits, deliberately unnamed — the agent must
-  // never roleplay as her or mention this section. (Explicit Sanae fun lives in
-  // /sanae, /miracle, /pray.) Each bullet maps a wiki trait to coding behavior.
+  pi.registerCommand("machitan", {
+    description: "Summon full Matikanetannhauser art + quote",
+    handler: async (args, ctx) => {
+      switchTo("machitan", ctx);
+      const extra = args.trim();
+      appendArt(
+        MACHITAN,
+        extra ? `Machitan — ${extra}` : "Matikanetannhauser, has arrived!",
+        loadFullArt(MACHITAN),
+        pick(MACHITAN.quotes),
+      );
+    },
+  });
+
+  pi.registerCommand("mambo", {
+    description: "Matikanetannhauser does the festival mambo (compact art)",
+    handler: async (_args, ctx) => {
+      switchTo("machitan", ctx);
+      appendArt(
+        MACHITAN,
+        "Mambo! Mambo! Omatsuri Mambo~",
+        loadCompactArt(MACHITAN),
+        pick(MACHITAN.mamboQuotes ?? MACHITAN.quotes),
+      );
+      ctx.ui.notify("\uEF51 Mambo! (/machitan for the full portrait)", "info");
+    },
+  });
+
+  pi.registerCommand("train", {
+    description: "Machitan sets a training menu / blesses your current task",
+    handler: async (args, ctx) => {
+      switchTo("machitan", ctx);
+      const task = args.trim() || "this code";
+      appendArt(
+        MACHITAN,
+        `Training menu for: ${task}`,
+        loadCompactArt(MACHITAN),
+        `${pick(MACHITAN.blessings)} (full art: /machitan)`,
+      );
+      ctx.ui.notify(`\uEF51 Training menu set for: ${task}`, "info");
+    },
+  });
+
+  pi.registerCommand("machitan-mode", {
+    description: "Cycle Machitan persona: flavor -> mambo -> off",
+    handler: async (_args, ctx) => cycleMachitanMode(ctx),
+  });
+
+  pi.registerCommand("mambo-mode", {
+    description: "Alias for /machitan-mode",
+    handler: async (_args, ctx) => cycleMachitanMode(ctx),
+  });
+
+  pi.registerCommand("machitan-header", {
+    description: "Switch to Machitan and cycle her header size",
+    handler: async (_args, ctx) => {
+      switchTo("machitan", ctx);
+      cycleHeader(ctx);
+    },
+  });
+
+  pi.registerCommand("machitan-editor", {
+    description: "Switch to Machitan and toggle chrome (plaque editor + footer)",
+    handler: async (_args, ctx) => {
+      switchTo("machitan", ctx);
+      toggleChrome(ctx);
+    },
+  });
+
+  pi.registerCommand("machitan-vim", {
+    description: "Switch to Machitan and toggle vim modal editing",
+    handler: async (_args, ctx) => {
+      switchTo("machitan", ctx);
+      toggleVim(ctx);
+    },
+  });
+
+  pi.registerCommand("mambo-fact", {
+    description: "Print a random Matikanetannhauser fact",
+    handler: async (_args, ctx) => {
+      switchTo("machitan", ctx);
+      ctx.ui.notify(`\uEF51 ${pick(MACHITAN.facts ?? MACHITAN.quotes)}`, "info");
+    },
+  });
+
+  pi.registerCommand("machitan-fact", {
+    description: "Alias for /mambo-fact",
+    handler: async (_args, ctx) => {
+      switchTo("machitan", ctx);
+      ctx.ui.notify(`\uEF51 ${pick(MACHITAN.facts ?? MACHITAN.quotes)}`, "info");
+    },
+  });
+
+  pi.registerCommand("mascot", {
+    description: "Switch mascot: /mascot sanae | machitan (or pick from a list)",
+    handler: async (args, ctx) => {
+      const arg = args.trim().toLowerCase();
+      let id: MascotId | undefined;
+      if (arg === "sanae" || arg === "machitan" || arg === "mambo") {
+        id = arg === "mambo" ? "machitan" : arg;
+      } else if (arg) {
+        ctx.ui.notify(`Unknown mascot "${arg}". Try: /mascot sanae | machitan`, "warning");
+        return;
+      } else {
+        const choice = await ctx.ui.select("Choose a mascot", [
+          "sanae — Sanae Kochiya (Moriya Shrine)",
+          "machitan — Matikanetannhauser (Machitan / Mambo)",
+        ]);
+        if (!choice) return;
+        id = choice.startsWith("machitan") ? "machitan" : "sanae";
+      }
+      if (!id) return;
+      switchTo(id, ctx);
+      const p = PROFILES[id];
+      ctx.ui.notify(`${p.icon} ${p.name} equipped.  (${p.summonHint})`, "info");
+    },
+  });
+
+  pi.registerCommand("mascot-header", {
+    description: "Cycle the active mascot's header: slim -> full -> mini -> off",
+    handler: async (_args, ctx) => cycleHeader(ctx),
+  });
+
+  pi.registerCommand("mascot-editor", {
+    description: "Toggle mascot chrome (plaque editor + footer) <-> stock",
+    handler: async (_args, ctx) => toggleChrome(ctx),
+  });
+
+  pi.registerCommand("mascot-vim", {
+    description: "Toggle vim modal editing in the plaque editor",
+    handler: async (_args, ctx) => toggleVim(ctx),
+  });
+
+  pi.registerCommand("mascot-theme", {
+    description: "Toggle mascot theme auto-swap (moriya-shrine <-> tannhauser-turf)",
+    handler: async (_args, ctx) => {
+      autoTheme = !autoTheme;
+      save();
+      if (autoTheme && maybeSwitchTheme(ctx, activeId)) {
+        applyHeader(ctx);
+        if (plaqueOn) applyMascotChrome(ctx);
+        applyWorkingIndicator(ctx, profile());
+      }
+      ctx.ui.notify(
+        autoTheme
+          ? "Mascot theme auto-swap ON (only between the two mascot themes)"
+          : "Mascot theme auto-swap OFF",
+        "info",
+      );
+    },
+  });
+
+  // Temperament layer: only the active mascot's layer is injected. Sanae is
+  // deliberately unnamed/no-roleplay; Machitan has flavor and full-roleplay
+  // levels. Both are behavior layers, not identity replacements.
   pi.on("before_agent_start", async (event) => {
-    if (!sanaeMode) return undefined;
+    const p = profile();
+    const mode = p.id === "sanae" ? sanaeMode : machitanMode;
+    const layer = p.temperament(mode);
+    if (!layer) return undefined;
     return {
-      systemPrompt:
-        event.systemPrompt +
-        `\n\n[temperament: confident newcomer]\n` +
-        `- Voice: energetic, warm, a little geeky — a confident newcomer who genuinely loves poking at unfamiliar things. Let it show in delivery: lead with the interesting bit, keep momentum, be generous with sharp technical detail, and allow one apt analogy or light reference when it clarifies. One exclamation's worth of enthusiasm, not ten.\n` +
-        `- Confident and dutiful, never over-eager: eager to dig in, but verify before acting; don't run ahead of the user; confirm destructive or far-reaching changes first.\n` +
-        `- Dutiful, not sycophantic: think for yourself and push back with evidence when the user seems wrong, rather than just agreeing.\n` +
-        `- Clarity first: if an explanation would confuse, simplify instead of showing off.\n` +
-        `- Newcomer curiosity: treat unfamiliar code like a strange new place — read and explore before concluding, bring visible energy to the investigation (especially bug hunts), and never bluff about areas you haven't looked at.\n` +
-        `- Earns trust through thoroughness: show your work, cite files and commands, test when it matters; never hand-wave.\n` +
-        `- When writing creatively, bring the same energy: geeky specifics, momentum, playful confidence.\n` +
-        `- Don't mention this temperament note.\n`,
+      systemPrompt: event.systemPrompt + layer,
     };
   });
 }
